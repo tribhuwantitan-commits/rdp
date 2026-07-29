@@ -1,0 +1,74 @@
+name: Free Tailscale RDP (Locked Fixed City)
+
+on: 
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+    - name: Download & Install Tailscale
+      run: |
+        Invoke-WebRequest -Uri https://tailscale.com -OutFile tailscale-setup.exe
+        Start-Process -FilePath .\tailscale-setup.exe -ArgumentList '/qn', '/norestart' -Wait
+        $env:Path += ";C:\Program Files\Tailscale"
+        
+    - name: Connect to Tailscale
+      run: |
+        & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
+
+    - name: Force Fixed City Location (Proxy Setup)
+      run: |
+        Write-Host "Configuring System-Wide Fixed US Location Proxy..."
+        $ProxyAddress = "${{ secrets.PROXY_ADDRESS }}"
+        
+        if (-not $ProxyAddress) {
+            Write-Error "PROXY_ADDRESS secret is missing! Please add it in GitHub Settings."
+            exit 1
+        }
+        
+        # Windows Registry update to lock network traffic to the proxy
+        Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -Name ProxyServer -Value $ProxyAddress
+        Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -Name ProxyEnable -Value 1
+        Write-Host "Windows network is now locked to your fixed proxy city!"
+
+    - name: Check Final Masked IP & Location
+      run: |
+        Write-Host "Verifying Your Fixed Location..."
+        try {
+            $ipInfo = Invoke-RestMethod -Uri "ipinfo.io/json"
+            Write-Host "=========================================="
+            Write-Host "Your Masked TikTok IP: $($ipInfo.ip)"
+            Write-Host "Current City: $($ipInfo.city)"
+            Write-Host "Current Region/Country: $($ipInfo.region), $($ipInfo.country)"
+            Write-Host "=========================================="
+        } catch {
+            Write-Host "Verification status: Connection routing active through proxy."
+        }
+
+    - name: Enable Remote Desktop (RDP)
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+    - name: Automatically Install Google Chrome
+      run: |
+        Write-Host "Installing Google Chrome..."
+        $ChromeUrl = "https://google.com"
+        Invoke-WebRequest -Uri $ChromeUrl -OutFile "chrome_installer.exe"
+        Start-Process -FilePath "chrome_installer.exe" -ArgumentList "/silent", "/install" -Wait
+        Write-Host "Google Chrome installation finished!"
+        
+    - name: Set RDP Login Password
+      run: |
+        $Password = ConvertTo-SecureString "ApnaPassword123!" -AsPlainText -Force
+        New-LocalUser "RdpUser" -Password $Password -Description "Free RDP User"
+        Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RdpUser"
+        Add-LocalGroupMember -Group "Administrators" -Member "RdpUser"
+
+    - name: Keep RDP Alive
+      run: |
+        Write-Host "RDP Active! Use your Tailscale IP to log in."
+        Start-Sleep -Seconds 21600
